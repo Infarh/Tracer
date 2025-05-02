@@ -1,0 +1,23 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <Version>1.$([System.DateTime]::UtcNow.AddHours(3).ToString("yy.Mdd.Hmm"))</Version>
+
+    <IsAotCompatible>true</IsAotCompatible>
+
+    <PublishAot>true</PublishAot>
+    <StripSymbols>true</StripSymbols>
+
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <OptimizationPreference>Size</OptimizationPreference>
+
+    <EventSourceSupport>false</EventSourceSupport>
+
+    <AssemblyName>$(MSBuildProjectName.ToLower())</AssemblyName>
+  </PropertyGroup>
+
+</Project>
