@@ -19,6 +19,7 @@ if (await Ex.GetAddressAsync(host) is not { } ip)
     return 1;
 }
 
+Console.Clear();
 Ex.WriteLine($"trace route to {(ip.ToString() == host ? ip : $"{host} [{ip}]")}");
 
 Ex.WriteLine("----+---------+-----------------+----------------------------------------");
@@ -39,7 +40,14 @@ for (var ttl = 1; ttl < 100; ttl++)
 
 Ex.WriteLine("----+---------+-----------------+----------------------------------------");
 
-await Task.WhenAll(monitors.Select(m => m.CompleteTask));
+try
+{
+    await Task.WhenAll(monitors.Select(m => m.CompleteTask));
+}
+catch (AggregateException)
+{
+    // ignore
+}
 
 Ex.WriteLine("End.");
 
@@ -88,7 +96,7 @@ internal class PingMonitor
 
             Ex.Write(_Line, 34, name);
         }
-        catch (SocketException e) when (e.SocketErrorCode == SocketError.HostNotFound)
+        catch (SocketException e) when (e is { SocketErrorCode: SocketError.HostNotFound or SocketError.NoData })
         {
             // ignore
         }
@@ -102,9 +110,16 @@ internal class PingMonitor
         {
             pings[i] = Task.Run(() =>
             {
-                using var ping = new Ping();
-                var response = ping.Send(_Address, 1000);
-                return response.Status == IPStatus.Success ? response.RoundtripTime : -1;
+                try
+                {
+                    using var ping = new Ping();
+                    var response = ping.Send(_Address, 1000);
+                    return response.Status == IPStatus.Success ? response.RoundtripTime : -1;
+                }
+                catch (PingException)
+                {
+                    return -1;
+                }
             });
             await Task.Delay(10).ConfigureAwait(false);
         }
@@ -152,8 +167,7 @@ internal static class Ex
     {
         lock (__ConsoleLock)
         {
-            var line = Console.CursorTop;
-            var col = Console.CursorLeft;
+            var (col, line) = Console.GetCursorPosition();
 
             Console.SetCursorPosition(Col, Line);
 
