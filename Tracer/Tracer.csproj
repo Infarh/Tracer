@@ -21,6 +21,12 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Remove="!release\**" />
+    <EmbeddedResource Remove="!release\**" />
+    <None Remove="!release\**" />
+  </ItemGroup>
+
+  <ItemGroup>
     <Using Include="Tracer" />
   </ItemGroup>
 
