@@ -20,4 +20,8 @@
     <AssemblyName>$(MSBuildProjectName.ToLower())</AssemblyName>
   </PropertyGroup>
 
+  <ItemGroup>
+    <Using Include="Tracer" />
+  </ItemGroup>
+
 </Project>

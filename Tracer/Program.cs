@@ -1,11 +1,16 @@
 ﻿using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
-using System.Reflection;
+
+if (args.Any(a => a is "--upgrade" or "--update"))
+{
+    await Updater.UpdateAsync();
+    return 0;
+}
 
 if (args.Any(a => a == "-v"))
 {
-    Console.WriteLine(typeof(Program).Assembly.GetCustomAttribute<AssemblyFileVersionAttribute>()?.Version);
+    Console.WriteLine(Updater.CurrentVersion);
     return -1;
 }
 
