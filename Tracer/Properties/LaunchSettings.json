@@ -2,7 +2,7 @@
   "profiles": {
     "Tracer": {
       "commandName": "Project",
-      "commandLineArgs": "--upgrade"
+      "commandLineArgs": ""
     }
   }
 }

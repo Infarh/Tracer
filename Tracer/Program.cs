@@ -24,12 +24,18 @@ if (await Ex.GetAddressAsync(host) is not { } ip)
     return 1;
 }
 
-Console.Clear();
-Ex.WriteLine($"trace route to {(ip.ToString() == host ? ip : $"{host} [{ip}]")}");
+using (var ping = new Ping())
+{
+    var response = await ping.SendPingAsync(ip);
+}
 
-Ex.WriteLine("----+---------+-----------------+----------------------------------------");
-Ex.WriteLine("ttl | ping    | ip-address      | host name");
-Ex.WriteLine("----+---------+-----------------+----------------------------------------");
+Console.Clear();
+Ex.WriteLine($"Trace route to {(ip.ToString() == host ? ip : $"{host} [{ip}]")}");
+Console.Title = $"Trace {(ip.ToString() == host ? ip : $"{host} [{ip}]")}";
+
+Ex.WriteLine("════╤═════════╤═════════════════╤════════════════════════════════════════");
+Ex.WriteLine("ttl │ ping    │ ip─address      │ host name");
+Ex.WriteLine("────┼─────────┼─────────────────┼────────────────────────────────────────");
 
 var monitors = new List<PingMonitor>();
 for (var ttl = 1; ttl < 100; ttl++)
@@ -37,13 +43,14 @@ for (var ttl = 1; ttl < 100; ttl++)
     {
         monitors.Add(new(Console.CursorTop, response_ip));
 
-        Ex.WriteLine($"{ttl,3} | ---- ms | {response_ip,-15} | ");
+        Ex.WriteLine($"{ttl,3} │ ---- ms │ {response_ip,-15} │ ");
 
         if (response_ip.Equals(ip))
             break;
     }
+    else
+        Ex.WriteLine($"{ttl,3} │         │                 │ no response");
 
-Ex.WriteLine("----+---------+-----------------+----------------------------------------");
 
 try
 {
@@ -54,6 +61,7 @@ catch (AggregateException)
     // ignore
 }
 
+Ex.WriteLine("════╧═════════╧═════════════════╧════════════════════════════════════════");
 Ex.WriteLine("End.");
 
 return 0;
@@ -109,7 +117,7 @@ internal class PingMonitor
 
     private async Task GetPingAsync()
     {
-        const int ping_count = 10;
+        const int ping_count = 20;
         var pings = new Task<long>[ping_count];
         for (var i = 0; i < ping_count; i++)
         {
