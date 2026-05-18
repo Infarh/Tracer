@@ -4,97 +4,122 @@ using System.Net.Sockets;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-if (args.Any(a => a is "--upgrade" or "--update"))
-{
-    await Updater.UpdateAsync();
-    return 0;
-}
+using var cancellation_token_source = new CancellationTokenSource();
 
-if (args.Any(a => a == "-v"))
-{
-    Console.WriteLine(Updater.CurrentVersion);
-    return 0;
-}
-
-var main_options = MainOptions.Parse(args);
-if (main_options.ErrorMessage is { } parse_error)
-{
-    Console.WriteLine(parse_error);
-    return 2;
-}
-
-var host = main_options.Host ?? "ya.ru";
-
-//const string ip_str = "212.164.140.129";
-
-var resolve_address_result = await Ex.ResolveAddressAsync(host);
-if (resolve_address_result.Address is not { } ip)
-{
-    Console.WriteLine(resolve_address_result.ErrorMessage ?? $"Unknown host ip \"{host}\"");
-    return 1;
-}
-
-if (main_options.Json)
-{
-    var hops = await Ex.TraceAsJsonAsync(
-        ip,
-        main_options.MaxTtl,
-        main_options.ProbesPerHop,
-        main_options.TimeoutMs,
-        !main_options.NoDns);
-
-    Console.WriteLine(JsonSerializer.Serialize(hops, ProgramJsonSerializationContext.Default.ListTraceHop));
-    return 0;
-}
-
-if (!Console.IsOutputRedirected)
-    Console.Clear();
-
-Ex.WriteLine($"Trace route to {(ip.ToString() == host ? ip : $"{host} [{ip}]")}");
-
-if (!Console.IsOutputRedirected)
-    Console.Title = $"Trace {(ip.ToString() == host ? ip : $"{host} [{ip}]")}";
-
-Ex.WriteLine("════╤═════════╤═════════════════╤════════════════════════════════════════");
-Ex.WriteLine("ttl │ ping    │ ip─address      │ host name");
-Ex.WriteLine("────┼─────────┼─────────────────┼────────────────────────────────────────");
-
-var monitors = new List<PingMonitor>();
-for (var ttl = 1; ttl <= main_options.MaxTtl; ttl++)
-    if (await ip.PingAsync(ttl, main_options.ProbesPerHop, main_options.TimeoutMs) is { Address: var response_ip })
-    {
-        monitors.Add(new(Console.CursorTop, response_ip, !main_options.NoDns));
-
-        Ex.WriteLine($"{ttl,3} │ ---- ms │ {response_ip,-15} │ ");
-
-        if (response_ip.Equals(ip))
-            break;
-    }
-    else
-        Ex.WriteLine($"{ttl,3} │         │                 │ no response");
-
+Console.CancelKeyPress += OnCancelKeyPress;
 
 try
 {
-    var monitor_tasks = monitors.Select(m => m.CompleteTask).ToArray();
-    await Task.WhenAll(monitor_tasks);
+    if (args.Any(a => a is "--upgrade" or "--update"))
+    {
+        await Updater.UpdateAsync();
+        return 0;
+    }
+
+    if (args.Any(a => a == "-v"))
+    {
+        Console.WriteLine(Updater.CurrentVersion);
+        return 0;
+    }
+
+    var main_options = MainOptions.Parse(args);
+    if (main_options.ErrorMessage is { } parse_error)
+    {
+        Console.WriteLine(parse_error);
+        return 2;
+    }
+
+    var host = main_options.Host ?? "ya.ru";
+
+    var resolve_address_result = await Ex.ResolveAddressAsync(host, cancellation_token_source.Token).ConfigureAwait(false);
+    if (resolve_address_result.Address is not { } ip)
+    {
+        Console.WriteLine(resolve_address_result.ErrorMessage ?? $"Unknown host ip \"{host}\"");
+        return 1;
+    }
+
+    if (main_options.Json)
+    {
+        var hops = await Ex.TraceAsJsonAsync(
+                ip,
+                main_options.MaxTtl,
+                main_options.ProbesPerHop,
+                main_options.TimeoutMs,
+                !main_options.NoDns,
+                cancellation_token_source.Token)
+            .ConfigureAwait(false);
+
+        Console.WriteLine(JsonSerializer.Serialize(hops, ProgramJsonSerializationContext.Default.ListTraceHop));
+        return 0;
+    }
+
+    if (!Console.IsOutputRedirected)
+        Console.Clear();
+
+    Ex.WriteLine($"Trace route to {(ip.ToString() == host ? ip : $"{host} [{ip}]")}");
+
+    if (!Console.IsOutputRedirected)
+        Console.Title = $"Trace {(ip.ToString() == host ? ip : $"{host} [{ip}]")}";
+
+    Ex.WriteLine("════╤═════════╤═════════════════╤════════════════════════════════════════");
+    Ex.WriteLine("ttl │ ping    │ ip─address      │ host name");
+    Ex.WriteLine("────┼─────────┼─────────────────┼────────────────────────────────────────");
+
+    var monitors = new List<PingMonitor>();
+    for (var ttl = 1; ttl <= main_options.MaxTtl; ttl++)
+    {
+        cancellation_token_source.Token.ThrowIfCancellationRequested();
+
+        if (await ip.PingAsync(ttl, main_options.ProbesPerHop, main_options.TimeoutMs, cancellation_token_source.Token).ConfigureAwait(false) is { Address: var response_ip })
+        {
+            monitors.Add(new(Console.CursorTop, response_ip, !main_options.NoDns, cancellation_token_source.Token));
+
+            Ex.WriteLine($"{ttl,3} │ ---- ms │ {response_ip,-15} │ ");
+
+            if (response_ip.Equals(ip))
+                break;
+        }
+        else
+            Ex.WriteLine($"{ttl,3} │         │                 │ no response");
+    }
+
+    try
+    {
+        var monitor_tasks = monitors.Select(m => m.CompleteTask).ToArray();
+        await Task.WhenAll(monitor_tasks).ConfigureAwait(false);
+    }
+    catch
+    {
+        var faulted_count = monitors.Count(m => m.CompleteTask.IsFaulted);
+        var canceled_count = monitors.Count(m => m.CompleteTask.IsCanceled);
+
+        if (faulted_count > 0)
+            Ex.WriteLine($"Warning: {faulted_count} monitor task(s) failed");
+
+        if (canceled_count > 0)
+            Ex.WriteLine($"Warning: {canceled_count} monitor task(s) canceled");
+    }
+
+    Ex.WriteLine("════╧═════════╧═════════════════╧════════════════════════════════════════");
+    Ex.WriteLine("End.");
+
+    return 0;
 }
-catch
+catch (OperationCanceledException)
 {
-    var faulted_count = monitors.Count(m => m.CompleteTask.IsFaulted);
-    var canceled_count = monitors.Count(m => m.CompleteTask.IsCanceled);
-
-    if (faulted_count > 0)
-        Ex.WriteLine($"Warning: {faulted_count} monitor task(s) failed");
-
-    if (canceled_count > 0)
-        Ex.WriteLine($"Warning: {canceled_count} monitor task(s) canceled");
+    Ex.WriteLine("Canceled by user.");
+    return 130;
+}
+finally
+{
+    Console.CancelKeyPress -= OnCancelKeyPress;
 }
 
-Ex.WriteLine("════╧═════════╧═════════════════╧════════════════════════════════════════");
-Ex.WriteLine("End.");
-
-return 0;
+void OnCancelKeyPress(object? sender, ConsoleCancelEventArgs event_args)
+{
+    event_args.Cancel = true;
+    cancellation_token_source.Cancel();
+}
 
 internal readonly record struct MainOptions(string? Host, int MaxTtl, int TimeoutMs, int ProbesPerHop, bool NoDns, bool Json, string? ErrorMessage)
 {
@@ -222,12 +247,14 @@ internal class PingMonitor
     private readonly int _Line;
     private readonly IPAddress _Address;
     private readonly bool _ResolveDns;
+    private readonly CancellationToken _CancellationToken;
 
-    public PingMonitor(int Line, IPAddress Address, bool ResolveDns)
+    public PingMonitor(int Line, IPAddress Address, bool ResolveDns, CancellationToken CancellationToken)
     {
         _Line = Line;
         _Address = Address;
         _ResolveDns = ResolveDns;
+        _CancellationToken = CancellationToken;
         Start();
     }
 
@@ -239,7 +266,7 @@ internal class PingMonitor
         var get_ping_task = GetPingAsync();
 
         var total_task = Task.WhenAll(get_name_task, get_ping_task);
-        total_task.ContinueWith(GetResult);
+        total_task.ContinueWith(GetResult, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
     }
 
     private void GetResult(Task task)
@@ -256,7 +283,8 @@ internal class PingMonitor
     {
         try
         {
-            var ip_host_entry = await Dns.GetHostEntryAsync(_Address).ConfigureAwait(false);
+            _CancellationToken.ThrowIfCancellationRequested();
+            var ip_host_entry = await Dns.GetHostEntryAsync(_Address).WaitAsync(_CancellationToken).ConfigureAwait(false);
             var name = ip_host_entry.HostName;
 
             Ex.Write(_Line, 34, name);
@@ -273,8 +301,9 @@ internal class PingMonitor
         var pings = new Task<long>[ping_count];
         for (var i = 0; i < ping_count; i++)
         {
+            _CancellationToken.ThrowIfCancellationRequested();
             pings[i] = GetSinglePingAsync();
-            await Task.Delay(10).ConfigureAwait(false);
+            await Task.Delay(10, _CancellationToken).ConfigureAwait(false);
         }
 
         var results = await Task.WhenAll(pings).ConfigureAwait(false);
@@ -288,7 +317,7 @@ internal class PingMonitor
             try
             {
                 using var ping = new Ping();
-                var response = await ping.SendPingAsync(_Address, 1000).ConfigureAwait(false);
+                var response = await ping.SendPingAsync(_Address, 1000).WaitAsync(_CancellationToken).ConfigureAwait(false);
                 return response.Status == IPStatus.Success ? response.RoundtripTime : -1;
             }
             catch (PingException)
@@ -301,14 +330,16 @@ internal class PingMonitor
 
 internal static class Ex
 {
-    public static async Task<ResolveAddressResult> ResolveAddressAsync(string address)
+    public static async Task<ResolveAddressResult> ResolveAddressAsync(string address, CancellationToken cancellation_token = default)
     {
+        cancellation_token.ThrowIfCancellationRequested();
+
         if (IPAddress.TryParse(address, out var ip))
             return new(ip, null);
 
         try
         {
-            var entry = await Dns.GetHostEntryAsync(address);
+            var entry = await Dns.GetHostEntryAsync(address).WaitAsync(cancellation_token).ConfigureAwait(false);
 
             if (entry.AddressList.Length == 0)
                 return new(null, $"Unknown host ip \"{address}\"");
@@ -361,16 +392,19 @@ internal static class Ex
         }
     }
 
-    public static async Task<PingReply?> PingAsync(this IPAddress ip, int ttl, int count = 5, int timeout_ms = 2000)
+    public static async Task<PingReply?> PingAsync(this IPAddress ip, int ttl, int count = 5, int timeout_ms = 2000, CancellationToken cancellation_token = default)
     {
         for (var i = 0; i < count; i++)
+        {
+            cancellation_token.ThrowIfCancellationRequested();
+
             try
             {
                 using var ping = new Ping();
                 var response = await ping.SendPingAsync(
                     ip,
                     TimeSpan.FromMilliseconds(timeout_ms),
-                    options: new(ttl, true)).ConfigureAwait(false);
+                    options: new(ttl, true)).WaitAsync(cancellation_token).ConfigureAwait(false);
 
                 if (response is { Status: IPStatus.Success or IPStatus.TtlExpired })
                     return response;
@@ -379,24 +413,27 @@ internal static class Ex
             {
                 // ignore
             }
+        }
 
         return null;
     }
 
-    public static async Task<List<TraceHop>> TraceAsJsonAsync(IPAddress destination_ip, int max_ttl, int probes_per_hop, int timeout_ms, bool resolve_dns)
+    public static async Task<List<TraceHop>> TraceAsJsonAsync(IPAddress destination_ip, int max_ttl, int probes_per_hop, int timeout_ms, bool resolve_dns, CancellationToken cancellation_token = default)
     {
         var trace_hops = new List<TraceHop>();
         for (var ttl = 1; ttl <= max_ttl; ttl++)
         {
-            var hop_response = await destination_ip.PingAsync(ttl, probes_per_hop, timeout_ms).ConfigureAwait(false);
+            cancellation_token.ThrowIfCancellationRequested();
+
+            var hop_response = await destination_ip.PingAsync(ttl, probes_per_hop, timeout_ms, cancellation_token).ConfigureAwait(false);
             if (hop_response is not { Address: { } hop_ip })
             {
                 trace_hops.Add(new(ttl, null, null, null, false, false));
                 continue;
             }
 
-            var ping_ms = await GetAveragePingAsync(hop_ip).ConfigureAwait(false);
-            var host_name = resolve_dns ? await TryGetHostNameAsync(hop_ip).ConfigureAwait(false) : null;
+            var ping_ms = await GetAveragePingAsync(hop_ip, cancellation_token: cancellation_token).ConfigureAwait(false);
+            var host_name = resolve_dns ? await TryGetHostNameAsync(hop_ip, cancellation_token).ConfigureAwait(false) : null;
             var is_destination = hop_ip.Equals(destination_ip);
 
             trace_hops.Add(new(ttl, hop_ip.ToString(), ping_ms, host_name, true, is_destination));
@@ -407,11 +444,12 @@ internal static class Ex
         return trace_hops;
     }
 
-    public static async Task<string?> TryGetHostNameAsync(IPAddress address)
+    public static async Task<string?> TryGetHostNameAsync(IPAddress address, CancellationToken cancellation_token = default)
     {
         try
         {
-            var ip_host_entry = await Dns.GetHostEntryAsync(address).ConfigureAwait(false);
+            cancellation_token.ThrowIfCancellationRequested();
+            var ip_host_entry = await Dns.GetHostEntryAsync(address).WaitAsync(cancellation_token).ConfigureAwait(false);
             return ip_host_entry.HostName;
         }
         catch (SocketException e) when (e is { SocketErrorCode: SocketError.HostNotFound or SocketError.NoData })
@@ -420,13 +458,14 @@ internal static class Ex
         }
     }
 
-    public static async Task<double?> GetAveragePingAsync(IPAddress address, int ping_count = 20, int timeout_ms = 1000)
+    public static async Task<double?> GetAveragePingAsync(IPAddress address, int ping_count = 20, int timeout_ms = 1000, CancellationToken cancellation_token = default)
     {
         var pings = new Task<long>[ping_count];
         for (var i = 0; i < ping_count; i++)
         {
+            cancellation_token.ThrowIfCancellationRequested();
             pings[i] = GetSinglePingAsync();
-            await Task.Delay(10).ConfigureAwait(false);
+            await Task.Delay(10, cancellation_token).ConfigureAwait(false);
         }
 
         var results = await Task.WhenAll(pings).ConfigureAwait(false);
@@ -438,7 +477,7 @@ internal static class Ex
             try
             {
                 using var ping = new Ping();
-                var response = await ping.SendPingAsync(address, timeout_ms).ConfigureAwait(false);
+                var response = await ping.SendPingAsync(address, timeout_ms).WaitAsync(cancellation_token).ConfigureAwait(false);
                 return response.Status == IPStatus.Success ? response.RoundtripTime : -1;
             }
             catch (PingException)
