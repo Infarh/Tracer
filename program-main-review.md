@@ -44,9 +44,8 @@
 
 ## 2) Модернизация (улучшения)
 
-- [ ] Добавить CLI-параметры: `max-ttl`, `timeout-ms`, `probes-per-hop`, `no-dns`, `json`
-  - Прогресс: реализованы `--max-ttl`, `--timeout-ms`, `--probes-per-hop`
-  - Осталось: `--no-dns`, `--json`
+- [x] Добавить CLI-параметры: `max-ttl`, `timeout-ms`, `probes-per-hop`, `no-dns`, `json`
+  - Прогресс: реализованы `--max-ttl`, `--timeout-ms`, `--probes-per-hop`, `--no-dns`, `--json`
 - [ ] Перейти на более структурный парсинг аргументов (например, System.CommandLine)
 - [ ] Улучшить метрики по хопу: `min/max/avg/loss/jitter`
 - [ ] Разделить логику на слои: трассировка, модель результата, вывод в консоль

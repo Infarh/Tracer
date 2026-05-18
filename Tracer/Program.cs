@@ -1,6 +1,8 @@
 ﻿using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 
 if (args.Any(a => a is "--upgrade" or "--update"))
 {
@@ -32,6 +34,19 @@ if (resolve_address_result.Address is not { } ip)
     return 1;
 }
 
+if (main_options.Json)
+{
+    var hops = await Ex.TraceAsJsonAsync(
+        ip,
+        main_options.MaxTtl,
+        main_options.ProbesPerHop,
+        main_options.TimeoutMs,
+        !main_options.NoDns);
+
+    Console.WriteLine(JsonSerializer.Serialize(hops, ProgramJsonSerializationContext.Default.ListTraceHop));
+    return 0;
+}
+
 if (!Console.IsOutputRedirected)
     Console.Clear();
 
@@ -48,7 +63,7 @@ var monitors = new List<PingMonitor>();
 for (var ttl = 1; ttl <= main_options.MaxTtl; ttl++)
     if (await ip.PingAsync(ttl, main_options.ProbesPerHop, main_options.TimeoutMs) is { Address: var response_ip })
     {
-        monitors.Add(new(Console.CursorTop, response_ip));
+        monitors.Add(new(Console.CursorTop, response_ip, !main_options.NoDns));
 
         Ex.WriteLine($"{ttl,3} │ ---- ms │ {response_ip,-15} │ ");
 
@@ -81,7 +96,7 @@ Ex.WriteLine("End.");
 
 return 0;
 
-internal readonly record struct MainOptions(string? Host, int MaxTtl, int TimeoutMs, int ProbesPerHop, string? ErrorMessage)
+internal readonly record struct MainOptions(string? Host, int MaxTtl, int TimeoutMs, int ProbesPerHop, bool NoDns, bool Json, string? ErrorMessage)
 {
     public static MainOptions Parse(string[] args)
     {
@@ -89,6 +104,8 @@ internal readonly record struct MainOptions(string? Host, int MaxTtl, int Timeou
         var max_ttl = 99;
         var timeout_ms = 2000;
         var probes_per_hop = 5;
+        var no_dns = false;
+        var json = false;
 
         for (var i = 0; i < args.Length; i++)
         {
@@ -97,52 +114,64 @@ internal readonly record struct MainOptions(string? Host, int MaxTtl, int Timeou
             if (arg is "-v" or "--update" or "--upgrade")
                 continue;
 
+            if (arg.Equals("--no-dns", StringComparison.OrdinalIgnoreCase))
+            {
+                no_dns = true;
+                continue;
+            }
+
+            if (arg.Equals("--json", StringComparison.OrdinalIgnoreCase))
+            {
+                json = true;
+                continue;
+            }
+
             if (TryReadIntOption(args, ref i, "--max-ttl", out var max_ttl_value, out var max_ttl_error))
             {
                 if (max_ttl_value is < 1 or > 255)
-                    return new(null, 0, 0, 0, "Option --max-ttl must be in range [1..255]");
+                    return new(null, 0, 0, 0, false, false, "Option --max-ttl must be in range [1..255]");
 
                 max_ttl = max_ttl_value;
                 continue;
             }
 
             if (max_ttl_error is not null)
-                return new(null, 0, 0, 0, max_ttl_error);
+                return new(null, 0, 0, 0, false, false, max_ttl_error);
 
             if (TryReadIntOption(args, ref i, "--timeout-ms", out var timeout_ms_value, out var timeout_ms_error))
             {
                 if (timeout_ms_value is < 100 or > 60000)
-                    return new(null, 0, 0, 0, "Option --timeout-ms must be in range [100..60000]");
+                    return new(null, 0, 0, 0, false, false, "Option --timeout-ms must be in range [100..60000]");
 
                 timeout_ms = timeout_ms_value;
                 continue;
             }
 
             if (timeout_ms_error is not null)
-                return new(null, 0, 0, 0, timeout_ms_error);
+                return new(null, 0, 0, 0, false, false, timeout_ms_error);
 
             if (TryReadIntOption(args, ref i, "--probes-per-hop", out var probes_per_hop_value, out var probes_per_hop_error))
             {
                 if (probes_per_hop_value is < 1 or > 20)
-                    return new(null, 0, 0, 0, "Option --probes-per-hop must be in range [1..20]");
+                    return new(null, 0, 0, 0, false, false, "Option --probes-per-hop must be in range [1..20]");
 
                 probes_per_hop = probes_per_hop_value;
                 continue;
             }
 
             if (probes_per_hop_error is not null)
-                return new(null, 0, 0, 0, probes_per_hop_error);
+                return new(null, 0, 0, 0, false, false, probes_per_hop_error);
 
             if (arg.StartsWith("-", StringComparison.Ordinal))
-                return new(null, 0, 0, 0, $"Unknown option: {arg}");
+                return new(null, 0, 0, 0, false, false, $"Unknown option: {arg}");
 
             if (host is not null)
-                return new(null, 0, 0, 0, "Only one host value is allowed");
+                return new(null, 0, 0, 0, false, false, "Only one host value is allowed");
 
             host = arg;
         }
 
-        return new(host, max_ttl, timeout_ms, probes_per_hop, null);
+        return new(host, max_ttl, timeout_ms, probes_per_hop, no_dns, json, null);
     }
 
     private static bool TryReadIntOption(string[] args, ref int index, string option_name, out int value, out string? error)
@@ -192,11 +221,13 @@ internal class PingMonitor
     private readonly TaskCompletionSource _CompletionSource = new();
     private readonly int _Line;
     private readonly IPAddress _Address;
+    private readonly bool _ResolveDns;
 
-    public PingMonitor(int Line, IPAddress Address)
+    public PingMonitor(int Line, IPAddress Address, bool ResolveDns)
     {
         _Line = Line;
         _Address = Address;
+        _ResolveDns = ResolveDns;
         Start();
     }
 
@@ -204,7 +235,7 @@ internal class PingMonitor
 
     private void Start()
     {
-        var get_name_task = GetNameAsync();
+        var get_name_task = _ResolveDns ? GetNameAsync() : Task.CompletedTask;
         var get_ping_task = GetPingAsync();
 
         var total_task = Task.WhenAll(get_name_task, get_ping_task);
@@ -303,6 +334,8 @@ internal static class Ex
 
     public readonly record struct ResolveAddressResult(IPAddress? Address, string? ErrorMessage);
 
+    public readonly record struct TraceHop(int Ttl, string? IpAddress, double? PingMs, string? HostName, bool Responded, bool IsDestination);
+
     private static readonly Lock __ConsoleLock = new();
 
     public static void WriteLine(string message)
@@ -349,4 +382,75 @@ internal static class Ex
 
         return null;
     }
+
+    public static async Task<List<TraceHop>> TraceAsJsonAsync(IPAddress destination_ip, int max_ttl, int probes_per_hop, int timeout_ms, bool resolve_dns)
+    {
+        var trace_hops = new List<TraceHop>();
+        for (var ttl = 1; ttl <= max_ttl; ttl++)
+        {
+            var hop_response = await destination_ip.PingAsync(ttl, probes_per_hop, timeout_ms).ConfigureAwait(false);
+            if (hop_response is not { Address: { } hop_ip })
+            {
+                trace_hops.Add(new(ttl, null, null, null, false, false));
+                continue;
+            }
+
+            var ping_ms = await GetAveragePingAsync(hop_ip).ConfigureAwait(false);
+            var host_name = resolve_dns ? await TryGetHostNameAsync(hop_ip).ConfigureAwait(false) : null;
+            var is_destination = hop_ip.Equals(destination_ip);
+
+            trace_hops.Add(new(ttl, hop_ip.ToString(), ping_ms, host_name, true, is_destination));
+            if (is_destination)
+                break;
+        }
+
+        return trace_hops;
+    }
+
+    public static async Task<string?> TryGetHostNameAsync(IPAddress address)
+    {
+        try
+        {
+            var ip_host_entry = await Dns.GetHostEntryAsync(address).ConfigureAwait(false);
+            return ip_host_entry.HostName;
+        }
+        catch (SocketException e) when (e is { SocketErrorCode: SocketError.HostNotFound or SocketError.NoData })
+        {
+            return null;
+        }
+    }
+
+    public static async Task<double?> GetAveragePingAsync(IPAddress address, int ping_count = 20, int timeout_ms = 1000)
+    {
+        var pings = new Task<long>[ping_count];
+        for (var i = 0; i < ping_count; i++)
+        {
+            pings[i] = GetSinglePingAsync();
+            await Task.Delay(10).ConfigureAwait(false);
+        }
+
+        var results = await Task.WhenAll(pings).ConfigureAwait(false);
+        var avg = results.Where(r => r >= 0).DefaultIfEmpty(0).Average();
+        return avg == 0 ? null : avg;
+
+        async Task<long> GetSinglePingAsync()
+        {
+            try
+            {
+                using var ping = new Ping();
+                var response = await ping.SendPingAsync(address, timeout_ms).ConfigureAwait(false);
+                return response.Status == IPStatus.Success ? response.RoundtripTime : -1;
+            }
+            catch (PingException)
+            {
+                return -1;
+            }
+        }
+    }
+}
+
+[JsonSourceGenerationOptions(WriteIndented = true)]
+[JsonSerializable(typeof(List<Ex.TraceHop>))]
+internal partial class ProgramJsonSerializationContext : JsonSerializerContext
+{
 }
