@@ -14,7 +14,14 @@ if (args.Any(a => a == "-v"))
     return 0;
 }
 
-var host = args.FirstOrDefault() ?? "ya.ru";
+var main_options = MainOptions.Parse(args);
+if (main_options.ErrorMessage is { } parse_error)
+{
+    Console.WriteLine(parse_error);
+    return 2;
+}
+
+var host = main_options.Host ?? "ya.ru";
 
 //const string ip_str = "212.164.140.129";
 
@@ -38,8 +45,8 @@ Ex.WriteLine("ttl │ ping    │ ip─address      │ host name");
 Ex.WriteLine("────┼─────────┼─────────────────┼────────────────────────────────────────");
 
 var monitors = new List<PingMonitor>();
-for (var ttl = 1; ttl < 100; ttl++)
-    if (await ip.PingAsync(ttl) is { Address: var response_ip })
+for (var ttl = 1; ttl <= main_options.MaxTtl; ttl++)
+    if (await ip.PingAsync(ttl, main_options.ProbesPerHop, main_options.TimeoutMs) is { Address: var response_ip })
     {
         monitors.Add(new(Console.CursorTop, response_ip));
 
@@ -73,6 +80,112 @@ Ex.WriteLine("════╧═════════╧═══════
 Ex.WriteLine("End.");
 
 return 0;
+
+internal readonly record struct MainOptions(string? Host, int MaxTtl, int TimeoutMs, int ProbesPerHop, string? ErrorMessage)
+{
+    public static MainOptions Parse(string[] args)
+    {
+        string? host = null;
+        var max_ttl = 99;
+        var timeout_ms = 2000;
+        var probes_per_hop = 5;
+
+        for (var i = 0; i < args.Length; i++)
+        {
+            var arg = args[i];
+
+            if (arg is "-v" or "--update" or "--upgrade")
+                continue;
+
+            if (TryReadIntOption(args, ref i, "--max-ttl", out var max_ttl_value, out var max_ttl_error))
+            {
+                if (max_ttl_value is < 1 or > 255)
+                    return new(null, 0, 0, 0, "Option --max-ttl must be in range [1..255]");
+
+                max_ttl = max_ttl_value;
+                continue;
+            }
+
+            if (max_ttl_error is not null)
+                return new(null, 0, 0, 0, max_ttl_error);
+
+            if (TryReadIntOption(args, ref i, "--timeout-ms", out var timeout_ms_value, out var timeout_ms_error))
+            {
+                if (timeout_ms_value is < 100 or > 60000)
+                    return new(null, 0, 0, 0, "Option --timeout-ms must be in range [100..60000]");
+
+                timeout_ms = timeout_ms_value;
+                continue;
+            }
+
+            if (timeout_ms_error is not null)
+                return new(null, 0, 0, 0, timeout_ms_error);
+
+            if (TryReadIntOption(args, ref i, "--probes-per-hop", out var probes_per_hop_value, out var probes_per_hop_error))
+            {
+                if (probes_per_hop_value is < 1 or > 20)
+                    return new(null, 0, 0, 0, "Option --probes-per-hop must be in range [1..20]");
+
+                probes_per_hop = probes_per_hop_value;
+                continue;
+            }
+
+            if (probes_per_hop_error is not null)
+                return new(null, 0, 0, 0, probes_per_hop_error);
+
+            if (arg.StartsWith("-", StringComparison.Ordinal))
+                return new(null, 0, 0, 0, $"Unknown option: {arg}");
+
+            if (host is not null)
+                return new(null, 0, 0, 0, "Only one host value is allowed");
+
+            host = arg;
+        }
+
+        return new(host, max_ttl, timeout_ms, probes_per_hop, null);
+    }
+
+    private static bool TryReadIntOption(string[] args, ref int index, string option_name, out int value, out string? error)
+    {
+        value = 0;
+        error = null;
+
+        var arg = args[index];
+        if (arg.Equals(option_name, StringComparison.OrdinalIgnoreCase))
+        {
+            if (index + 1 >= args.Length)
+            {
+                error = $"Option {option_name} requires value";
+                return false;
+            }
+
+            index++;
+            var raw_value = args[index];
+            if (!int.TryParse(raw_value, out value))
+            {
+                error = $"Option {option_name} expects integer value";
+                return false;
+            }
+
+            return true;
+        }
+
+        var option_prefix = option_name + "=";
+        if (arg.StartsWith(option_prefix, StringComparison.OrdinalIgnoreCase))
+        {
+            var raw_value = arg[option_prefix.Length..];
+            if (!int.TryParse(raw_value, out value))
+            {
+                error = $"Option {option_name} expects integer value";
+                return false;
+            }
+
+            return true;
+        }
+
+        return false;
+    }
+}
 
 internal class PingMonitor
 {
@@ -215,7 +328,7 @@ internal static class Ex
         }
     }
 
-    public static async Task<PingReply?> PingAsync(this IPAddress ip, int ttl, int count = 5)
+    public static async Task<PingReply?> PingAsync(this IPAddress ip, int ttl, int count = 5, int timeout_ms = 2000)
     {
         for (var i = 0; i < count; i++)
             try
@@ -223,7 +336,7 @@ internal static class Ex
                 using var ping = new Ping();
                 var response = await ping.SendPingAsync(
                     ip,
-                    TimeSpan.FromSeconds(2),
+                    TimeSpan.FromMilliseconds(timeout_ms),
                     options: new(ttl, true)).ConfigureAwait(false);
 
                 if (response is { Status: IPStatus.Success or IPStatus.TtlExpired })
