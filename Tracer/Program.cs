@@ -11,7 +11,7 @@ if (args.Any(a => a is "--upgrade" or "--update"))
 if (args.Any(a => a == "-v"))
 {
     Console.WriteLine(Updater.CurrentVersion);
-    return -1;
+    return 0;
 }
 
 var host = args.FirstOrDefault() ?? "ya.ru";
@@ -24,14 +24,13 @@ if (await Ex.GetAddressAsync(host) is not { } ip)
     return 1;
 }
 
-using (var ping = new Ping())
-{
-    var response = await ping.SendPingAsync(ip);
-}
+if (!Console.IsOutputRedirected)
+    Console.Clear();
 
-Console.Clear();
 Ex.WriteLine($"Trace route to {(ip.ToString() == host ? ip : $"{host} [{ip}]")}");
-Console.Title = $"Trace {(ip.ToString() == host ? ip : $"{host} [{ip}]")}";
+
+if (!Console.IsOutputRedirected)
+    Console.Title = $"Trace {(ip.ToString() == host ? ip : $"{host} [{ip}]")}";
 
 Ex.WriteLine("════╤═════════╤═════════════════╤════════════════════════════════════════");
 Ex.WriteLine("ttl │ ping    │ ip─address      │ host name");
@@ -121,19 +120,7 @@ internal class PingMonitor
         var pings = new Task<long>[ping_count];
         for (var i = 0; i < ping_count; i++)
         {
-            pings[i] = Task.Run(() =>
-            {
-                try
-                {
-                    using var ping = new Ping();
-                    var response = ping.Send(_Address, 1000);
-                    return response.Status == IPStatus.Success ? response.RoundtripTime : -1;
-                }
-                catch (PingException)
-                {
-                    return -1;
-                }
-            });
+            pings[i] = GetSinglePingAsync();
             await Task.Delay(10).ConfigureAwait(false);
         }
 
@@ -142,6 +129,20 @@ internal class PingMonitor
 
         if (avg == 0) return;
         Ex.Write(_Line, 6, $"{avg,4:f0}");
+
+        async Task<long> GetSinglePingAsync()
+        {
+            try
+            {
+                using var ping = new Ping();
+                var response = await ping.SendPingAsync(_Address, 1000).ConfigureAwait(false);
+                return response.Status == IPStatus.Success ? response.RoundtripTime : -1;
+            }
+            catch (PingException)
+            {
+                return -1;
+            }
+        }
     }
 }
 
@@ -178,6 +179,9 @@ internal static class Ex
 
     public static void Write(int Line, int Col, string str)
     {
+        if (Console.IsOutputRedirected)
+            return;
+
         lock (__ConsoleLock)
         {
             var (col, line) = Console.GetCursorPosition();
@@ -192,40 +196,23 @@ internal static class Ex
 
     public static async Task<PingReply?> PingAsync(this IPAddress ip, int ttl, int count = 5)
     {
-        var cancellation = new CancellationTokenSource(2000);
-
-        var tasks = Enumerable.Range(0, count)
-            .Select(_ => Task.Run(async () =>
+        for (var i = 0; i < count; i++)
+            try
             {
-                if (cancellation.Token.IsCancellationRequested)
-                    return null;
+                using var ping = new Ping();
+                var response = await ping.SendPingAsync(
+                    ip,
+                    TimeSpan.FromSeconds(2),
+                    options: new(ttl, true)).ConfigureAwait(false);
 
-                try
-                {
-                    using var ping1 = new Ping();
-                    var response = await ping1.SendPingAsync(
-                        ip,
-                        TimeSpan.FromSeconds(2),
-                        options: new(ttl, true), cancellationToken: cancellation.Token);
+                if (response is { Status: IPStatus.Success or IPStatus.TtlExpired })
+                    return response;
+            }
+            catch (PingException)
+            {
+                // ignore
+            }
 
-                    if (response is { Status: IPStatus.Success or IPStatus.TtlExpired })
-                        return response;
-                }
-                catch (OperationCanceledException)
-                {
-                    // ignore
-                }
-
-                await Task.Delay(2000, CancellationToken.None).ConfigureAwait(false);
-
-                return null;
-            }, cancellation.Token));
-
-        var result_task = await Task.WhenAny(tasks).ConfigureAwait(false);
-
-        await cancellation.CancelAsync().ConfigureAwait(false);
-
-        var result = await result_task.ConfigureAwait(false);
-        return result;
+        return null;
     }
 }
