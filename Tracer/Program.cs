@@ -18,9 +18,10 @@ var host = args.FirstOrDefault() ?? "ya.ru";
 
 //const string ip_str = "212.164.140.129";
 
-if (await Ex.GetAddressAsync(host) is not { } ip)
+var resolve_address_result = await Ex.ResolveAddressAsync(host);
+if (resolve_address_result.Address is not { } ip)
 {
-    Console.WriteLine($"Unknown host ip \"{host}\"");
+    Console.WriteLine(resolve_address_result.ErrorMessage ?? $"Unknown host ip \"{host}\"");
     return 1;
 }
 
@@ -53,11 +54,19 @@ for (var ttl = 1; ttl < 100; ttl++)
 
 try
 {
-    await Task.WhenAll(monitors.Select(m => m.CompleteTask));
+    var monitor_tasks = monitors.Select(m => m.CompleteTask).ToArray();
+    await Task.WhenAll(monitor_tasks);
 }
-catch (AggregateException)
+catch
 {
-    // ignore
+    var faulted_count = monitors.Count(m => m.CompleteTask.IsFaulted);
+    var canceled_count = monitors.Count(m => m.CompleteTask.IsCanceled);
+
+    if (faulted_count > 0)
+        Ex.WriteLine($"Warning: {faulted_count} monitor task(s) failed");
+
+    if (canceled_count > 0)
+        Ex.WriteLine($"Warning: {canceled_count} monitor task(s) canceled");
 }
 
 Ex.WriteLine("════╧═════════╧═════════════════╧════════════════════════════════════════");
@@ -148,26 +157,38 @@ internal class PingMonitor
 
 internal static class Ex
 {
-    public static async Task<IPAddress?> GetAddressAsync(string address)
+    public static async Task<ResolveAddressResult> ResolveAddressAsync(string address)
     {
         if (IPAddress.TryParse(address, out var ip))
-            return ip;
+            return new(ip, null);
 
         try
         {
             var entry = await Dns.GetHostEntryAsync(address);
 
             if (entry.AddressList.Length == 0)
-                return null;
+                return new(null, $"Unknown host ip \"{address}\"");
 
             ip = entry.AddressList.FirstOrDefault(a => a.AddressFamily == AddressFamily.InterNetwork);
-            return ip;
+            return ip is null
+                ? new(null, $"Host \"{address}\" has no IPv4 address")
+                : new(ip, null);
         }
-        catch (SocketException e) when (e.SocketErrorCode == SocketError.HostNotFound)
+        catch (SocketException e) when (e.SocketErrorCode is SocketError.HostNotFound or SocketError.NoData)
         {
-            return null;
+            return new(null, $"Unknown host ip \"{address}\"");
+        }
+        catch (SocketException e) when (e.SocketErrorCode is SocketError.TryAgain or SocketError.TimedOut)
+        {
+            return new(null, $"Temporary DNS failure for \"{address}\", try again later");
+        }
+        catch (SocketException e)
+        {
+            return new(null, $"DNS resolve error for \"{address}\": {e.SocketErrorCode}");
         }
     }
+
+    public readonly record struct ResolveAddressResult(IPAddress? Address, string? ErrorMessage);
 
     private static readonly Lock __ConsoleLock = new();
 
