@@ -1,5 +1,6 @@
 using System.Net;
 using Tracer.ConsoleOutput;
+using Tracer.Tracing.Models;
 
 namespace Tracer.Tracing.Services;
 
@@ -66,10 +67,22 @@ internal sealed class PingMonitor
     /// <summary>Получает усредненный RTT и пишет результат в строку хопа</summary>
     private async Task GetPingAsync()
     {
-        var avg = await PingService.GetAveragePingAsync(_Address, CancellationToken: _CancellationToken).ConfigureAwait(false);
-        if (avg is null)
+        var metrics = await PingService.GetHopMetricsAsync(_Address, CancellationToken: _CancellationToken).ConfigureAwait(false);
+        if (metrics.AvgPingMs is not { } avg)
             return;
 
         ConsoleWriter.Write(_Line, 6, $"{avg,4:f0}");
+        ConsoleWriter.Write(_Line, 34, CreateMetricsText(metrics));
+    }
+
+    /// <summary>Формирует компактное текстовое представление метрик хопа</summary>
+    /// <param name="Metrics">Набор метрик</param>
+    /// <returns>Строка метрик для консольного вывода</returns>
+    private static string CreateMetricsText(HopMetrics Metrics)
+    {
+        var min = Metrics.MinPingMs is { } min_value ? $"{min_value:f0}" : "-";
+        var max = Metrics.MaxPingMs is { } max_value ? $"{max_value:f0}" : "-";
+        var jitter = Metrics.JitterMs is { } jitter_value ? $"{jitter_value:f1}" : "-";
+        return $"min:{min} max:{max} loss:{Metrics.LossPercent:f0}% jit:{jitter}";
     }
 }

@@ -48,7 +48,8 @@
   - Прогресс: реализованы `--max-ttl`, `--timeout-ms`, `--probes-per-hop`, `--no-dns`, `--json`
 - [x] Перейти на более структурный парсинг аргументов (например, System.CommandLine)
   - Прогресс: добавлен выделенный `Cli/MainOptionsParser` с централизованной валидацией и поддержкой флагов/значений
-- [ ] Улучшить метрики по хопу: `min/max/avg/loss/jitter`
+- [x] Улучшить метрики по хопу: `min/max/avg/loss/jitter`
+  - Прогресс: добавлен расчёт метрик в `PingService` и вывод деталей хопа в консоль/JSON
 - [x] Разделить логику на слои: трассировка, модель результата, вывод в консоль
   - Прогресс: `Program.cs` декомпозирован на `Cli`, `Tracing/Models`, `Tracing/Services`, `ConsoleOutput`, `Serialization`
 - [x] Добавить `CancellationToken` верхнего уровня (корректная остановка по Ctrl+C)

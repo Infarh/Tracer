@@ -63,7 +63,7 @@ try
         Console.Title = $"Trace {(ip.ToString() == host ? ip : $"{host} [{ip}]")}";
 
     ConsoleWriter.WriteLine("════╤═════════╤═════════════════╤════════════════════════════════════════");
-    ConsoleWriter.WriteLine("ttl │ ping    │ ip─address      │ host name");
+    ConsoleWriter.WriteLine("ttl │ ping    │ ip─address      │ host / metrics");
     ConsoleWriter.WriteLine("────┼─────────┼─────────────────┼────────────────────────────────────────");
 
     var monitors = new List<PingMonitor>();

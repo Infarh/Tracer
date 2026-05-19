@@ -29,15 +29,26 @@ internal static class TraceService
             var hop_response = await PingService.ProbeHopAsync(DestinationIp, ttl, ProbesPerHop, TimeoutMs, CancellationToken).ConfigureAwait(false);
             if (hop_response is not { Address: { } hop_ip })
             {
-                trace_hops.Add(new(ttl, null, null, null, false, false));
+                trace_hops.Add(new(ttl, null, null, null, null, null, null, null, false, false));
                 continue;
             }
 
-            var ping_ms = await PingService.GetAveragePingAsync(hop_ip, CancellationToken: CancellationToken).ConfigureAwait(false);
+            var metrics = await PingService.GetHopMetricsAsync(hop_ip, CancellationToken: CancellationToken).ConfigureAwait(false);
             var host_name = ResolveDns ? await AddressResolver.TryGetHostNameAsync(hop_ip, CancellationToken).ConfigureAwait(false) : null;
             var is_destination = hop_ip.Equals(DestinationIp);
 
-            trace_hops.Add(new(ttl, hop_ip.ToString(), ping_ms, host_name, true, is_destination));
+            trace_hops.Add(new(
+                ttl,
+                hop_ip.ToString(),
+                metrics.AvgPingMs,
+                metrics.MinPingMs,
+                metrics.MaxPingMs,
+                metrics.LossPercent,
+                metrics.JitterMs,
+                host_name,
+                true,
+                is_destination));
+
             if (is_destination)
                 break;
         }

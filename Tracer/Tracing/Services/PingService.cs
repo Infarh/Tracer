@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.NetworkInformation;
+using Tracer.Tracing.Models;
 
 namespace Tracer.Tracing.Services;
 
@@ -52,13 +53,13 @@ internal static class PingService
         return null;
     }
 
-    /// <summary>Считает средний RTT по серии ping</summary>
+    /// <summary>Считает метрики RTT по серии ping</summary>
     /// <param name="Address">Адрес для проверки</param>
     /// <param name="PingCount">Количество ping-запросов</param>
     /// <param name="TimeoutMs">Таймаут одной ping-операции</param>
     /// <param name="CancellationToken">Токен отмены</param>
-    /// <returns>Средний RTT в миллисекундах или null</returns>
-    public static async Task<double?> GetAveragePingAsync(IPAddress Address, int PingCount = 20, int TimeoutMs = 1000, CancellationToken CancellationToken = default)
+    /// <returns>Набор метрик хопа</returns>
+    public static async Task<HopMetrics> GetHopMetricsAsync(IPAddress Address, int PingCount = 20, int TimeoutMs = 1000, CancellationToken CancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(Address);
 
@@ -77,8 +78,19 @@ internal static class PingService
         }
 
         var results = await Task.WhenAll(pings).ConfigureAwait(false);
-        var avg = results.Where(r => r >= 0).DefaultIfEmpty(0).Average();
-        return avg == 0 ? null : avg;
+        var successful_pings = results.Where(r => r >= 0).Select(r => (double)r).ToArray();
+        var received_count = successful_pings.Length;
+        var loss_percent = 100.0 * (PingCount - received_count) / PingCount;
+
+        if (received_count == 0)
+            return new(null, null, null, loss_percent, null, PingCount, received_count);
+
+        var min_ping = successful_pings.Min();
+        var max_ping = successful_pings.Max();
+        var avg_ping = successful_pings.Average();
+        var jitter = CalculateJitter(successful_pings);
+
+        return new(min_ping, max_ping, avg_ping, loss_percent, jitter, PingCount, received_count);
 
         async Task<long> GetSinglePingAsync()
         {
@@ -92,6 +104,18 @@ internal static class PingService
             {
                 return -1;
             }
+        }
+
+        static double? CalculateJitter(double[] samples)
+        {
+            if (samples.Length < 2)
+                return null;
+
+            var deltas = new double[samples.Length - 1];
+            for (var i = 1; i < samples.Length; i++)
+                deltas[i - 1] = Math.Abs(samples[i] - samples[i - 1]);
+
+            return deltas.Average();
         }
     }
 }
