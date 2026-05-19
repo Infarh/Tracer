@@ -46,7 +46,8 @@
 
 - [x] Добавить CLI-параметры: `max-ttl`, `timeout-ms`, `probes-per-hop`, `no-dns`, `json`
   - Прогресс: реализованы `--max-ttl`, `--timeout-ms`, `--probes-per-hop`, `--no-dns`, `--json`
-- [ ] Перейти на более структурный парсинг аргументов (например, System.CommandLine)
+- [x] Перейти на более структурный парсинг аргументов (например, System.CommandLine)
+  - Прогресс: добавлен выделенный `Cli/MainOptionsParser` с централизованной валидацией и поддержкой флагов/значений
 - [ ] Улучшить метрики по хопу: `min/max/avg/loss/jitter`
 - [x] Разделить логику на слои: трассировка, модель результата, вывод в консоль
   - Прогресс: `Program.cs` декомпозирован на `Cli`, `Tracing/Models`, `Tracing/Services`, `ConsoleOutput`, `Serialization`

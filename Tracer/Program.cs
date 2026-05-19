@@ -11,23 +11,23 @@ Console.CancelKeyPress += OnCancelKeyPress;
 
 try
 {
-    if (args.Any(a => a is "--upgrade" or "--update"))
+    var main_options = MainOptionsParser.Parse(args);
+    if (main_options.ErrorMessage is { } parse_error)
+    {
+        Console.WriteLine(parse_error);
+        return 2;
+    }
+
+    if (main_options.RunUpdate)
     {
         await Updater.UpdateAsync();
         return 0;
     }
 
-    if (args.Any(a => a == "-v"))
+    if (main_options.ShowVersion)
     {
         Console.WriteLine(Updater.CurrentVersion);
         return 0;
-    }
-
-    var main_options = MainOptions.Parse(args);
-    if (main_options.ErrorMessage is { } parse_error)
-    {
-        Console.WriteLine(parse_error);
-        return 2;
     }
 
     var host = main_options.Host ?? "ya.ru";
