@@ -54,12 +54,12 @@ try
         return 0;
     }
 
-    if (!Console.IsOutputRedirected)
+    if (ConsoleWriter.CanUseCursorControl())
         Console.Clear();
 
     ConsoleWriter.WriteLine($"Trace route to {(ip.ToString() == host ? ip : $"{host} [{ip}]")}");
 
-    if (!Console.IsOutputRedirected)
+    if (ConsoleWriter.CanUseCursorControl())
         Console.Title = $"Trace {(ip.ToString() == host ? ip : $"{host} [{ip}]")}";
 
     ConsoleWriter.WriteLine("════╤═════════╤═════════════════╤════════════════════════════════════════");
@@ -73,7 +73,7 @@ try
 
         if (await PingService.ProbeHopAsync(ip, ttl, main_options.ProbesPerHop, main_options.TimeoutMs, cancellation_token_source.Token).ConfigureAwait(false) is { Address: var response_ip })
         {
-            monitors.Add(new(Console.CursorTop, response_ip, !main_options.NoDns, cancellation_token_source.Token));
+            monitors.Add(new(ConsoleWriter.GetCursorTopOrFallback(), response_ip, !main_options.NoDns, cancellation_token_source.Token));
 
             ConsoleWriter.WriteLine($"{ttl,3} │ ---- ms │ {response_ip,-15} │ ");
 
